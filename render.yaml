@@ -5,7 +5,7 @@ services:
     name: parkwatch-api
     runtime: python
     rootDir: Flipkart_grid-main/backend
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
