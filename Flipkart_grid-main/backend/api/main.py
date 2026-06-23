@@ -49,10 +49,11 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 # ── Reuse existing backend logic ─────────────────────────────────────────────
 from api.helpers import (  # noqa: E402
@@ -69,6 +70,7 @@ from api import agent as agent_mod  # noqa: E402
 from api import rag  # noqa: E402
 from api import etl  # noqa: E402
 from api import ml  # noqa: E402
+from api import db  # noqa: E402
 
 # ════════════════════════════════════════════════════════════════════════════
 #  CONFIG
@@ -472,6 +474,52 @@ app.add_middleware(
 
 
 
+from starlette.requests import Request
+from starlette.responses import Response
+
+# Telemetry store
+_telemetry_stats = {
+    "total_requests": 0,
+    "total_errors": 0,
+    "endpoints": {},
+    "avg_latency_ms": 0.0
+}
+
+@app.middleware("http")
+async def add_telemetry_middleware(request: Request, call_next):
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception as exc:
+        status_code = 500
+        _telemetry_stats["total_errors"] += 1
+        raise exc
+    finally:
+        process_time = (time.time() - start_time) * 1000
+        _telemetry_stats["total_requests"] += 1
+        
+        # Update running average
+        n = _telemetry_stats["total_requests"]
+        old_avg = _telemetry_stats["avg_latency_ms"]
+        _telemetry_stats["avg_latency_ms"] = old_avg + (process_time - old_avg) / n
+        
+        path = request.url.path
+        if path not in _telemetry_stats["endpoints"]:
+            _telemetry_stats["endpoints"][path] = {"hits": 0, "errors": 0, "avg_latency": 0.0}
+            
+        ep = _telemetry_stats["endpoints"][path]
+        ep["hits"] += 1
+        if status_code >= 400:
+            ep["errors"] += 1
+            _telemetry_stats["total_errors"] += 1
+            
+        ep_old_avg = ep["avg_latency"]
+        ep["avg_latency"] = ep_old_avg + (process_time - ep_old_avg) / ep["hits"]
+        
+    return response
+
 @app.get("/api/health")
 def health():
     return {
@@ -528,6 +576,7 @@ def telemetry_summary(_: dict = Depends(require_auth)):
         "economicLossPerSec": econ["perSec"],
         "economicLossBase": econ["base"],
         "dataset": DATASET_SOURCE,
+        "telemetry": _telemetry_stats
     }
 
 
@@ -833,6 +882,43 @@ def commander_chat(body: ChatBody, _: dict = Depends(require_auth)):
     return result
 
 
+@app.get("/api/logs/stream")
+async def logs_stream(request: Request):
+    """SSE endpoint to stream real-time interaction logs."""
+    async def event_generator():
+        last_id = 0
+        while True:
+            if await request.is_disconnected():
+                break
+            
+            # Fetch new logs from db
+            db_session = next(db.get_db())
+            try:
+                logs = db_session.query(db.InteractionLog).filter(db.InteractionLog.id > last_id).order_by(db.InteractionLog.id.asc()).all()
+                for log in logs:
+                    last_id = log.id
+                    payload = {
+                        "id": log.id,
+                        "session_id": log.session_id,
+                        "timestamp": log.timestamp.isoformat() + "Z",
+                        "user_query": log.user_query,
+                        "ai_response": log.ai_response,
+                        "tools_used": log.tools_used,
+                        "confidence_score": log.confidence_score,
+                        "intent": log.intent
+                    }
+                    yield {
+                        "event": "message",
+                        "data": json.dumps(payload)
+                    }
+            finally:
+                db_session.close()
+
+            await asyncio.sleep(2)
+
+    return EventSourceResponse(event_generator())
+
+
 @app.get("/api/commander/insights")
 def commander_insights(_: dict = Depends(require_auth)):
     feature_importance = _feature_importance()
@@ -929,6 +1015,22 @@ def _process_upload(job_id: str, raw: bytes, filename: str, cmap: dict | None):
         _upload_jobs[job_id]["status"] = "processing"
         df, stats = etl.clean_dataframe(raw, column_map=cmap)
         active = set_active_dataset(df, source=filename or "upload")
+        
+        # Save to database
+        try:
+            db_session = next(db.get_db())
+            reg = db.DatasetRegistry(
+                filename=filename or "upload",
+                row_count=stats["final_rows"],
+                schema_json={"columns": list(df.columns)},
+                is_active=1
+            )
+            db_session.add(reg)
+            db_session.commit()
+            db_session.close()
+        except Exception as e:
+            print(f"[upload] Failed to register dataset: {e}")
+
         # Retrain models on the new dataset in the same background thread.
         try:
             ml.train_all(DF, DATASET_VERSION)

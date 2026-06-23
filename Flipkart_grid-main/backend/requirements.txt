@@ -18,12 +18,13 @@ lightgbm>=4.0.0
 # ── Production agent stack (OPTIONAL — all modules degrade gracefully) ──
 # Install to light up: PostgreSQL persistence, Chroma RAG, LangGraph agent,
 # Prophet/XGBoost forecasting, fuzzy ETL header matching.
-# rapidfuzz>=3.6.0            # ETL fuzzy header mapping (else stdlib difflib)
-# SQLAlchemy>=2.0.0           # relational persistence (needs DATABASE_URL)
-# psycopg2-binary>=2.9.9      # PostgreSQL driver (Supabase/Neon)
-# chromadb>=0.5.0             # vector store for RAG
-# sentence-transformers>=2.7  # embeddings for Chroma
-# prophet>=1.1.5             # seasonal forecasting (else seasonal-naive)
-# langchain>=0.2.0           # agent tool orchestration
-# langchain-groq>=0.1.0      # Groq LLM binding
-# langgraph>=0.1.0           # stateful ReAct graph
+rapidfuzz>=3.6.0            # ETL fuzzy header mapping (else stdlib difflib)
+SQLAlchemy>=2.0.0           # relational persistence (needs DATABASE_URL)
+psycopg2-binary>=2.9.9      # PostgreSQL driver (Supabase/Neon)
+chromadb>=0.5.0             # vector store for RAG
+sentence-transformers>=2.7  # embeddings for Chroma
+prophet>=1.1.5             # seasonal forecasting (else seasonal-naive)
+langchain>=0.2.0           # agent tool orchestration
+langchain-groq>=0.1.0      # Groq LLM binding
+langgraph>=0.1.0           # stateful ReAct graph
+sse-starlette>=2.0.0       # Server-Sent Events for real-time logs

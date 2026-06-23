@@ -24,6 +24,7 @@ import TacticalCommander from "../tabs/TacticalCommander.jsx";
 import DataInspector from "../tabs/DataInspector.jsx";
 import LiveCCTV from "../tabs/LiveCCTV.jsx";
 import FleetOptimizer from "../tabs/FleetOptimizer.jsx";
+import InteractionLogs from "../tabs/InteractionLogs.jsx";
 
 // `roles` controls visibility. Users see a limited subset; admins see everything.
 const TABS = [
@@ -34,6 +35,7 @@ const TABS = [
   { id: "data", label: "Data Inspector", icon: Database, accent: "cyan", Comp: DataInspector, roles: ["admin"] },
   { id: "cctv", label: "Live CCTV Vision", icon: Camera, accent: "rose", Comp: LiveCCTV, roles: ["user", "admin"] },
   { id: "fleet", label: "OR-Tools Fleet", icon: Truck, accent: "amber", Comp: FleetOptimizer, roles: ["admin"] },
+  { id: "logs", label: "Interaction Logs", icon: Database, accent: "cyan", Comp: InteractionLogs, roles: ["admin"] },
 ];
 
 export default function Dashboard() {

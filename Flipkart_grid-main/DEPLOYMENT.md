@@ -28,7 +28,7 @@ persistence, vector RAG, real LLM, and ML forecasting.
 
 ## 2. Backend — Render
 
-- Blueprint: [`render.yaml`](render.yaml) (rootDir → `Flipkart_grid-main/backend`).
+- Blueprint: [`render.yaml`](render.yaml) (rootDir → `backend`).
 - Build: `pip install -r requirements.txt` · Start: `uvicorn api.main:app --host 0.0.0.0 --port $PORT`.
 - To enable the production stack, uncomment the optional block in
   `backend/requirements.txt` (SQLAlchemy, psycopg2, chromadb, sentence-transformers,

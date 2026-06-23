@@ -24,8 +24,11 @@ import os
 import re
 
 import pandas as pd
+import time
 
 from api import rag
+from api import db
+from api import langchain_agent
 
 
 # ── Tools / helpers ──────────────────────────────────────────────────────────
@@ -87,6 +90,9 @@ def _wants_forecast(q: str) -> bool:
 
 # ── Memory ───────────────────────────────────────────────────────────────────
 def _recent_turns(session_id, history, limit=10):
+    db_turns = db.get_recent_interactions(session_id, limit=limit)
+    if db_turns:
+        return db_turns
     return (history or [])[-limit:]
 
 
@@ -95,8 +101,20 @@ def _corrections(turns):
     return [t["text"] for t in turns if t.get("role") == "user" and any(c in t["text"].lower() for c in cues)]
 
 
-def log_interaction(session_id, user_query, ai_response, tools_called):
-    pass
+def log_interaction(session_id, user_query, ai_response, tools_called, execution_time=0.0, confidence_score=0.0, recommendation="", intent=""):
+    try:
+        db.insert_interaction_log(
+            session_id=session_id or "default",
+            user_query=user_query,
+            ai_response=ai_response,
+            tools_used=tools_called,
+            execution_time=execution_time,
+            confidence_score=confidence_score,
+            recommendations_generated=recommendation,
+            intent=intent
+        )
+    except Exception as e:
+        print(f"[agent] Failed to log interaction: {e}")
 
 
 def _peak_str(h):
@@ -105,12 +123,29 @@ def _peak_str(h):
 
 # ── Main entrypoint ──────────────────────────────────────────────────────────
 def answer(message: str, df: pd.DataFrame, history=None, session_id=None) -> dict:
+    start_time = time.time()
+    turns = _recent_turns(session_id, history)
+    
+    # Try LangChain tool-calling agent first
+    lc_result = langchain_agent.run_langchain_agent(message, df, turns)
+    if lc_result:
+        lc_result["intent"] = "langchain_dynamic"
+        execution_time = time.time() - start_time
+        log_interaction(
+            session_id, message, lc_result["reply"], lc_result.get("tools_called", []),
+            execution_time=execution_time,
+            confidence_score=lc_result.get("confidence_score", 0.0),
+            recommendation=lc_result.get("recommendation", ""),
+            intent="langchain_dynamic"
+        )
+        return lc_result
+
+    # Fallback to deterministic routing if LangChain fails/unavailable
     ql = message.lower().strip()
     tools_called = ["StatsQueryTool"]
     stats = stats_tool(df, message)
     sources = rag.retrieve(message, k=3)
     tools_called.append("RAGGuidelinesTool")
-    turns = _recent_turns(session_id, history)
     corrections = _corrections(turns)
 
     station = _match_station(message, df)
@@ -267,7 +302,14 @@ def answer(message: str, df: pd.DataFrame, history=None, session_id=None) -> dic
         "tools_called": tools_called,
         "intent": intent,
     }
-    log_interaction(session_id, message, reply, tools_called)
+    execution_time = time.time() - start_time
+    log_interaction(
+        session_id, message, reply, tools_called,
+        execution_time=execution_time,
+        confidence_score=float(confidence),
+        recommendation=recommendation,
+        intent=intent
+    )
     return result
 
 
