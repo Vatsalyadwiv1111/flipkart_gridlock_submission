@@ -466,8 +466,7 @@ app = FastAPI(title="ParkWatch AI API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    # Also accept any localhost port (Vite may pick 5174/5175 if 5173 is taken).
-    allow_origin_regex=r"http://localhost:\d+",
+    allow_origin_regex=r".*",  # Allow all Vercel/Render domains
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
