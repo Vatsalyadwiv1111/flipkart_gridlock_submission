@@ -5,73 +5,124 @@ import GlassCard from "../components/ui/GlassCard.jsx";
 import SectionHeader from "../components/ui/SectionHeader.jsx";
 import { Loading, ErrorState } from "../components/ui/AsyncState.jsx";
 import { useSelectedLocation } from "../context/LocationContext.jsx";
-import { useFetch, useLazyRequest, endpoints } from "../lib/api.js";
+import { useLazyRequest, endpoints } from "../lib/api.js";
+import BengaluruMap from "../components/map/BengaluruMap.jsx";
 
 const nowClock = () => new Date().toLocaleTimeString("en-GB");
 
 export default function LiveCCTV() {
-  // The active feed follows the globally selected location (set by map clicks or
-  // hotspot rows on other tabs). Read-only here — no local camera dropdown.
-  const { selectedLocation } = useSelectedLocation();
-  const { data, loading, error, refetch } = useFetch(endpoints.cctvCameras, []);
+  const { selectedLocation, setSelectedLocation } = useSelectedLocation();
 
-  const [running, setRunning] = useState(false);
+  // Fetch camera data exactly once — never refetch on parkwatch:dataset-changed
+  // because the camera list is static and refetching causes the loading spinner
+  // to flash every 3.2 s while recording is active.
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    endpoints.cctvCameras()
+      .then((d) => { setData(d); setLoading(false); })
+      .catch((e) => { setError(e.message || "Failed to load cameras"); setLoading(false); });
+  }, []);
+
+  const [running, setRunning] = useState(true);
   const [fps, setFps] = useState(28.4);
   const [log, setLog] = useState([]);
-  const [pushed, setPushed] = useState(0); // # detections posted to the backend
+  const [pushed, setPushed] = useState(0);
   const idRef = useRef(7742);
 
-  // "Recalculate Dispatch VRP" action.
   const { run: runVrp, data: vrp, loading: vrpLoading } = useLazyRequest(endpoints.dispatcherVrp);
 
-  // Seed the infraction log when camera data arrives.
+  // Seed the infraction log once when data first arrives.
+  const seededRef = useRef(false);
   useEffect(() => {
-    if (data?.detections) setLog(data.detections);
+    if (data?.detections && !seededRef.current) {
+      setLog(data.detections);
+      seededRef.current = true;
+    }
   }, [data]);
 
-  // Live behaviour while "recording": flicker FPS, append infractions, AND post
-  // each new detection to the backend so maps/telemetry/routes include it.
+  // Keep refs in sync so the interval closure always reads the latest values
+  // without needing to be recreated on every state change.
+  const dataRef = useRef(data);
+  const locationRef = useRef(selectedLocation);
+  useEffect(() => { dataRef.current = data; }, [data]);
+  useEffect(() => { locationRef.current = selectedLocation; }, [selectedLocation]);
+
+  // Recording loop — only restarts when running toggles.
   useEffect(() => {
-    if (!running || !data?.pool) return;
-    const camNow = data.cameras.find((c) => c.zone === selectedLocation) ?? data.cameras[0];
-    const fpsTimer = setInterval(() => setFps(+(26 + Math.random() * 6).toFixed(1)), 1200);
+    if (!running) return;
+    const fpsTimer = setInterval(
+      () => setFps(+(26 + Math.random() * 6).toFixed(1)),
+      1200
+    );
     const logTimer = setInterval(() => {
-      const pool = data.pool;
+      const d = dataRef.current;
+      if (!d?.pool) return;
+      const camNow =
+        d.cameras.find((c) => c.zone === locationRef.current) ?? d.cameras[0];
+      const pool = d.pool;
       const pick = pool[Math.floor(Math.random() * pool.length)];
       const conf = +(80 + Math.random() * 19).toFixed(1);
-      setLog((l) => [{ ...pick, id: `DET-${idRef.current++}`, time: nowClock(), conf }, ...l].slice(0, 14));
+      const newId = `DET-${idRef.current++}`;
 
-      // ── CCTV → backend feedback loop ──
-      if (camNow) {
-        endpoints
-          .cctvInfraction({
-            latitude: camNow.lat + (Math.random() - 0.5) * 0.008,
-            longitude: camNow.lon + (Math.random() - 0.5) * 0.008,
-            vehicle_type: pick.vehicle,
-            violation_type: pick.type,
-            location: camNow.label,
-            confidence: conf,
-          })
-          .then(() => {
-            setPushed((p) => p + 1);
-            // Notify every mounted tab to refetch with the new violation included.
-            window.dispatchEvent(new CustomEvent("parkwatch:dataset-changed"));
-          })
-          .catch(() => {});
-      }
+      setLog((l) =>
+        [{ ...pick, id: newId, time: nowClock(), conf, camLabel: camNow?.label }, ...l].slice(0, 20)
+      );
+
+      if (!camNow) return;
+      endpoints
+        .cctvInfraction({
+          latitude: camNow.lat + (Math.random() - 0.5) * 0.008,
+          longitude: camNow.lon + (Math.random() - 0.5) * 0.008,
+          vehicle_type: pick.vehicle,
+          violation_type: pick.type,
+          location: camNow.label,
+          confidence: conf,
+        })
+        .then((res) => {
+          if (res?.cis !== undefined) {
+            setLog((l) =>
+              l.map((e) =>
+                e.id === newId
+                  ? { ...e, cis: res.cis, action: res.action ?? e.action }
+                  : e
+              )
+            );
+          }
+          setPushed((p) => p + 1);
+          window.dispatchEvent(new CustomEvent("parkwatch:dataset-changed"));
+        })
+        .catch(() => {});
     }, 3200);
+
     return () => {
       clearInterval(fpsTimer);
       clearInterval(logTimer);
     };
-  }, [running, data, selectedLocation]);
+  }, [running]);
 
   if (loading) return <Loading label="Connecting to camera grid…" height={420} />;
-  if (error) return <ErrorState error={error} onRetry={refetch} height={420} />;
+  if (error) return <ErrorState error={error} onRetry={() => window.location.reload()} height={420} />;
 
   const cameras = data.cameras;
   const boxes = data.boxes;
-  const cam = cameras.find((c) => c.zone === selectedLocation) ?? cameras[0] ?? { label: selectedLocation, zone: selectedLocation, cam: 1 };
+  const cam =
+    cameras.find((c) => c.zone === selectedLocation) ??
+    cameras[0] ??
+    { label: `${selectedLocation} Main Rd - Cam 1`, zone: selectedLocation, cam: 1, lat: 0, lon: 0 };
+
+  // Markers for the camera network map — risk coloured by CIS.
+  const cameraMarkers = cameras.map((c) => ({
+    lat: c.lat,
+    lon: c.lon,
+    zone: c.zone,
+    cis: c.cis,
+    risk: c.cis > 30 ? "critical" : c.cis > 10 ? "medium" : "clear",
+  }));
+  const flyTarget = cam.lat
+    ? { lat: cam.lat, lon: cam.lon, name: cam.zone, risk: "critical" }
+    : null;
 
   return (
     <div className="space-y-5">
@@ -95,13 +146,13 @@ export default function LiveCCTV() {
         <GlassCard className="space-y-4 p-5" accentBar="from-rose to-amber" hover={false}>
           <SectionHeader title="Edge node" sub="YOLOv8 inference control" icon={Camera} accent="rose" className="mb-0" />
 
-          {/* Read-only active camera — bound to the global LocationContext */}
+          {/* Active camera — updated when user clicks the map below */}
           <div className="rounded-inner border border-subtle bg-card/50 px-3 py-2.5">
             <div className="label-caps mb-1 flex items-center gap-1.5">
               <MapPin size={12} className="text-violet" /> Active camera feed
             </div>
             <div className="text-sm font-semibold text-ink-primary">{cam.label}</div>
-            <div className="font-mono text-[0.68rem] text-ink-faint">Synced from map · click any marker to switch</div>
+            <div className="font-mono text-[0.68rem] text-ink-faint">Click a zone on the map to switch</div>
           </div>
 
           <button
@@ -117,12 +168,12 @@ export default function LiveCCTV() {
             {running ? "Stop Analysis" : "Start Live Edge Analysis"}
           </button>
 
-          {/* Feedback-loop status + manual VRP recompute */}
           {pushed > 0 && (
             <div className="flex items-center gap-1.5 rounded-inner px-3 py-2 text-xs" style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", color: "#6EE7B7" }}>
               <CheckCircle2 size={13} /> {pushed} detection{pushed > 1 ? "s" : ""} pushed to live dataset
             </div>
           )}
+
           <button
             onClick={() => runVrp(4).catch(() => {})}
             disabled={vrpLoading}
@@ -162,12 +213,8 @@ export default function LiveCCTV() {
                 style={{ background: "linear-gradient(135deg,#12101f,#0b0d16)", border: "1px solid rgba(99,91,255,0.5)", boxShadow: "0 0 30px rgba(79,70,229,0.25)" }}
               >
                 <div className="absolute inset-0 opacity-70" style={{ backgroundImage: "radial-gradient(120% 90% at 30% 40%, rgba(251,77,109,0.05), transparent 60%), linear-gradient(180deg, #0d0f18 0%, #12141f 100%)" }} />
-
-                {/* lane divider lines */}
                 <div className="absolute bottom-0 top-0" style={{ left: "48%", borderLeft: "2px dashed rgba(148,163,220,0.4)" }} />
                 <div className="absolute bottom-0 top-0" style={{ left: "74%", borderLeft: "2px dashed rgba(148,163,220,0.4)" }} />
-
-                {/* NO PARKING ZONE parallelogram */}
                 <div
                   className="absolute"
                   style={{ left: "6%", top: "12%", width: "32%", height: "76%", transform: "skewX(-11deg)", border: "2px dashed rgba(251,77,109,0.6)", borderRadius: 8, background: "linear-gradient(180deg, rgba(251,77,109,0.10), rgba(251,77,109,0.02))" }}
@@ -175,16 +222,12 @@ export default function LiveCCTV() {
                 <span className="absolute font-bold uppercase tracking-wider" style={{ left: "10%", top: "16%", color: "#FB4D6D", fontSize: "0.8rem", letterSpacing: "0.08em", textShadow: "0 0 10px rgba(251,77,109,0.5)" }}>
                   No Parking Zone
                 </span>
-
-                {/* scanning reticle */}
                 <motion.div
                   className="absolute inset-x-0 h-[2px]"
                   style={{ background: "linear-gradient(90deg, transparent, #22D3EE, transparent)", boxShadow: "0 0 12px #22D3EE", opacity: 0.5 }}
                   animate={{ top: ["0%", "100%", "0%"] }}
                   transition={{ duration: 3.5, repeat: Infinity, ease: "linear" }}
                 />
-
-                {/* LIVE REC + FPS */}
                 <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded px-2 py-1" style={{ background: "rgba(251,77,109,0.92)" }}>
                   <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
                   <span className="text-[0.62rem] font-black uppercase tracking-widest text-white">Live Rec</span>
@@ -192,8 +235,6 @@ export default function LiveCCTV() {
                 <div className="absolute right-3 top-3 rounded px-2 py-1 font-mono text-[0.62rem] text-emerald" style={{ background: "rgba(0,0,0,0.6)", border: "1px solid rgba(148,163,220,0.15)" }}>
                   FPS: {fps} | {cam.label}
                 </div>
-
-                {/* detection boxes */}
                 {boxes.map((b, i) => (
                   <motion.div
                     key={b.label}
@@ -209,7 +250,6 @@ export default function LiveCCTV() {
                     {!b.ok && <span className="absolute inset-0 animate-pulse rounded" style={{ boxShadow: `inset 0 0 18px ${b.color}` }} />}
                   </motion.div>
                 ))}
-
                 <div className="absolute bottom-2 right-3 font-mono text-[0.62rem] text-ink-faint">
                   YOLOv8-Nano · NVIDIA Jetson Orin · Edge Inference
                 </div>
@@ -238,59 +278,112 @@ export default function LiveCCTV() {
         </GlassCard>
       </div>
 
-      {/* Live infraction log table */}
+      {/* Camera network map — click any zone marker to switch the active feed */}
+      <GlassCard className="p-4" accentBar="from-violet to-rose" hover={false}>
+        <div className="mb-3 flex items-center justify-between">
+          <SectionHeader
+            title="Camera network"
+            sub={`${cameras.length} cameras deployed · click a zone to switch active feed`}
+            icon={MapPin}
+            accent="violet"
+            className="mb-0"
+          />
+          <span className="rounded-inner border border-violet/30 bg-violet/10 px-2.5 py-1 font-mono text-[0.68rem] text-violet">
+            Active: {cam.zone}
+          </span>
+        </div>
+        <BengaluruMap
+          markers={cameraMarkers}
+          height="300px"
+          zoom={11}
+          onSelectLocation={setSelectedLocation}
+          selectedLocation={selectedLocation}
+          flyTo={flyTarget}
+        />
+        <p className="mt-2 text-center text-[0.68rem] text-ink-faint">
+          Red = high CIS · Amber = medium · Green = clear · Selected zone highlighted
+        </p>
+      </GlassCard>
+
+      {/* Live infraction log */}
       <GlassCard className="p-5" accentBar="from-rose to-violet" hover={false}>
         <div className="mb-4 flex items-center justify-between">
           <SectionHeader title="Live infractions log" sub="Auto-generated challans · appended in real time" icon={ShieldAlert} accent="rose" className="mb-0" />
-          {running && <span className="font-mono text-xs text-emerald">● streaming</span>}
+          <div className="flex items-center gap-3">
+            {running && (
+              <span className="flex items-center gap-1.5 font-mono text-xs text-emerald">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald" />
+                streaming
+              </span>
+            )}
+            {log.length > 0 && (
+              <span className="font-mono text-xs text-ink-faint">{log.length} record{log.length !== 1 ? "s" : ""}</span>
+            )}
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] border-collapse text-sm">
-            <thead>
-              <tr className="text-left">
-                {["Detection Time", "Camera", "Vehicle Type", "Confidence", "Offense", "Est. CIS Impact", "Action"].map((h) => (
-                  <th key={h} className="label-caps border-b border-subtle px-3 py-2 text-violet">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              <AnimatePresence initial={false}>
-                {log.map((d, i) => (
-                  <motion.tr
-                    key={d.id}
-                    initial={{ opacity: 0, backgroundColor: "rgba(251,77,109,0.12)" }}
-                    animate={{ opacity: 1, backgroundColor: "rgba(0,0,0,0)" }}
-                    transition={{ duration: 0.8 }}
-                    className="border-b border-subtle/60"
-                    style={{ background: i % 2 ? "rgba(19,29,48,0.4)" : "transparent" }}
-                  >
-                    <td className="px-3 py-2 font-mono text-xs text-rose">{d.time}</td>
-                    <td className="px-3 py-2 text-xs text-ink-body">{cam.label}</td>
-                    <td className="px-3 py-2 text-amber">{d.vehicle}</td>
-                    <td className="px-3 py-2 font-mono text-violet">{d.conf}%</td>
-                    <td className="px-3 py-2 text-ink-primary">{d.type}</td>
-                    <td className="px-3 py-2">
-                      <span className="font-mono font-semibold" style={{ color: d.cis > 60 ? "#FB4D6D" : d.cis > 30 ? "#F59E0B" : "#10B981" }}>
-                        {Number(d.cis).toFixed(1)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className="rounded-chip px-2 py-0.5 text-[0.68rem] font-semibold" style={actionStyle(d.action)}>
-                        {d.action}
-                      </span>
-                    </td>
-                  </motion.tr>
-                ))}
-              </AnimatePresence>
-            </tbody>
-          </table>
-        </div>
-
-        {!running && (
-          <p className="mt-3 text-center text-xs text-ink-faint">
-            Showing last recorded session — start the feed to stream live detections.
-          </p>
+        {log.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <ShieldAlert size={36} className="mb-3 text-ink-faint/40" />
+            <p className="text-sm font-medium text-ink-body">No detections yet</p>
+            <p className="mt-1 text-xs text-ink-faint">
+              Click <span className="font-semibold text-rose">Start Live Edge Analysis</span> to begin streaming infractions.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] border-collapse text-sm">
+                <thead>
+                  <tr className="text-left">
+                    {["Time", "Camera", "Vehicle", "Confidence", "Offense", "CIS Impact", "Action"].map((h) => (
+                      <th key={h} className="label-caps border-b border-subtle px-3 py-2 text-violet">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <AnimatePresence initial={false}>
+                    {log.map((d, i) => (
+                      <motion.tr
+                        key={d.id}
+                        initial={{ opacity: 0, x: -8, backgroundColor: "rgba(251,77,109,0.15)" }}
+                        animate={{ opacity: 1, x: 0, backgroundColor: "rgba(0,0,0,0)" }}
+                        transition={{ duration: 0.6 }}
+                        className="border-b border-subtle/60"
+                        style={{ background: i % 2 ? "rgba(19,29,48,0.4)" : "transparent" }}
+                      >
+                        <td className="px-3 py-2.5 font-mono text-xs text-rose">{d.time}</td>
+                        <td className="px-3 py-2.5 text-xs text-ink-body">
+                          {d.camLabel ?? cam.label}
+                        </td>
+                        <td className="px-3 py-2.5 font-semibold text-amber">{d.vehicle}</td>
+                        <td className="px-3 py-2.5 font-mono text-violet">{d.conf}%</td>
+                        <td className="px-3 py-2.5 text-ink-primary">{d.type}</td>
+                        <td className="px-3 py-2.5">
+                          <span
+                            className="font-mono font-bold"
+                            style={{ color: d.cis > 60 ? "#FB4D6D" : d.cis > 30 ? "#F59E0B" : "#10B981" }}
+                          >
+                            {Number(d.cis).toFixed(1)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="rounded-chip px-2 py-0.5 text-[0.68rem] font-semibold" style={actionStyle(d.action)}>
+                            {d.action}
+                          </span>
+                        </td>
+                      </motion.tr>
+                    ))}
+                  </AnimatePresence>
+                </tbody>
+              </table>
+            </div>
+            {!running && (
+              <p className="mt-3 text-center text-xs text-ink-faint">
+                Showing last session — start the feed to stream new detections.
+              </p>
+            )}
+          </>
         )}
       </GlassCard>
     </div>
@@ -307,6 +400,7 @@ function Spec({ label, value, color }) {
 }
 
 function actionStyle(action) {
+  if (!action) return { background: "rgba(148,163,220,0.1)", color: "#94A3B8", border: "1px solid rgba(148,163,220,0.2)" };
   if (action.includes("Tow")) return { background: "rgba(251,77,109,0.14)", color: "#FB4D6D", border: "1px solid rgba(251,77,109,0.3)" };
   if (action.includes("Alert")) return { background: "rgba(245,158,11,0.14)", color: "#F59E0B", border: "1px solid rgba(245,158,11,0.3)" };
   return { background: "rgba(34,211,238,0.12)", color: "#22D3EE", border: "1px solid rgba(34,211,238,0.3)" };

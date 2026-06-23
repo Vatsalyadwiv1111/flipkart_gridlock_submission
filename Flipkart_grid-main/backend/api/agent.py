@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Optional
 
 import pandas as pd
 import time
@@ -53,7 +54,7 @@ def stats_tool(df: pd.DataFrame, query: str) -> dict:
     return out
 
 
-def _match_station(message: str, df: pd.DataFrame) -> str | None:
+def _match_station(message: str, df: pd.DataFrame) -> Optional[str]:
     """Find a station/zone named in the question."""
     if "police_station" not in df.columns or df.empty:
         return None
@@ -71,7 +72,7 @@ def _match_station(message: str, df: pd.DataFrame) -> str | None:
     return best if best_score > 0 else None
 
 
-def _station_stats(df: pd.DataFrame, name: str) -> dict | None:
+def _station_stats(df: pd.DataFrame, name: str) -> Optional[dict]:
     sub = df[df["police_station"] == name]
     if sub.empty:
         return None

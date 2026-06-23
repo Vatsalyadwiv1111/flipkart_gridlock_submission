@@ -35,6 +35,7 @@ import json
 import math
 import os
 import time
+import uuid
 from typing import Optional
 
 import numpy as np
@@ -695,7 +696,7 @@ def analytics_charts(_: dict = Depends(require_auth)):
 # ════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/forecast/predict")
-def forecast_predict(days: int = 7, station: str | None = None, day: str | None = None, _: dict = Depends(require_auth)):
+def forecast_predict(days: int = 7, station: Optional[str] = None, day: Optional[str] = None, _: dict = Depends(require_auth)):
     """Forecast endpoint.
 
     • ?day=Monday  → 24-hour congestion-risk profile for that weekday
@@ -718,10 +719,10 @@ def active_alerts(_: dict = Depends(require_auth)):
 class EtaBody(BaseModel):
     latitude: float                  # destination (hotspot)
     longitude: float
-    origin_lat: float | None = None  # origin (depot); defaults to central depot
-    origin_lon: float | None = None
-    hour: int | None = None
-    cis_density: float | None = None
+    origin_lat: Optional[float] = None  # origin (depot); defaults to central depot
+    origin_lon: Optional[float] = None
+    hour: Optional[int] = None
+    cis_density: Optional[float] = None
 
 
 @app.post("/api/predict/eta")
@@ -854,7 +855,7 @@ def simulator_leaderboard(_: dict = Depends(require_auth)):
 class ChatBody(BaseModel):
     message: str
     history: list[dict] = []
-    session_id: str | None = None
+    session_id: Optional[str] = None
 
 
 def _build_system_prompt() -> str:
@@ -1004,12 +1005,11 @@ def data_preview(_: dict = Depends(require_auth)):
 
 
 # ── Async upload job store ────────────────────────────────────────────────────
-import uuid as _uuid
 
 _upload_jobs: dict[str, dict] = {}  # job_id -> {"status", "result", "error"}
 
 
-def _process_upload(job_id: str, raw: bytes, filename: str, cmap: dict | None):
+def _process_upload(job_id: str, raw: bytes, filename: str, cmap: Optional[dict]):
     """Runs in a background thread. Updates _upload_jobs[job_id] when done."""
     try:
         _upload_jobs[job_id]["status"] = "processing"
@@ -1062,7 +1062,7 @@ def _process_upload(job_id: str, raw: bytes, filename: str, cmap: dict | None):
 async def data_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    column_map: str | None = Form(None),
+    column_map: Optional[str] = Form(None),
     _: dict = Depends(require_auth),
 ):
     """Accept a CSV, kick off background processing, return a job_id immediately."""
@@ -1073,7 +1073,7 @@ async def data_upload(
             cmap = json.loads(column_map)
         except Exception:  # noqa: BLE001
             cmap = None
-    job_id = str(_uuid.uuid4())
+    job_id = str(uuid.uuid4())
     _upload_jobs[job_id] = {"status": "queued"}
     background_tasks.add_task(_process_upload, job_id, raw, file.filename or "upload", cmap)
     return {"job_id": job_id, "status": "queued"}
@@ -1124,9 +1124,18 @@ def data_clean(body: CleanBody, _: dict = Depends(require_auth)):
 
 @app.get("/api/cctv/cameras")
 def cctv_cameras(_: dict = Depends(require_auth)):
+    import datetime as _dt
+    zone_cis_map = {z["name"]: z.get("avgCis", 0) for z in ZONE_STATS}
     cameras = [
-        {"zone": z["name"], "cam": (i % 12) + 1, "label": f"{z['name']} Rd · Cam {(i % 12) + 1}", "cis": z["avgCis"], "lat": z["lat"], "lon": z["lon"]}
-        for i, z in enumerate(ZONE_STATS)
+        {
+            "zone": z["name"],
+            "cam": (i % 12) + 1,
+            "label": f"{z['name']} Main Rd - Cam {(i % 12) + 1}",
+            "cis": zone_cis_map.get(z["name"], round(3.0 + i * 0.7, 1)),
+            "lat": z["lat"],
+            "lon": z["lon"],
+        }
+        for i, z in enumerate(ZONES)
     ]
     boxes = [
         {"label": "Car", "conf": 96, "status": "VIOLATION", "color": "#FB4D6D", "ok": False, "x": 9, "y": 44, "w": 19, "h": 22},
@@ -1141,13 +1150,15 @@ def cctv_cameras(_: dict = Depends(require_auth)):
         {"vehicle": "Two-Wheeler", "type": "Sidewalk Parking", "cis": 15.2, "action": "Traffic Fine Issued", "critical": False},
         {"vehicle": "Auto", "type": "Wrong Side Parking", "cis": 28.4, "action": "Traffic Fine Issued", "critical": False},
     ]
+    now = _dt.datetime.now()
     detections = []
     for i in range(6):
         p = pool[i % len(pool)]
+        t = now - _dt.timedelta(seconds=i * 67)
         detections.append(
             {
                 "id": f"DET-{7741 - i}",
-                "time": f"13:{42 - i:02d}:{int(_RNG.integers(0, 60)):02d}",
+                "time": f"{t.hour:02d}:{t.minute:02d}:{t.second:02d}",
                 "vehicle": p["vehicle"],
                 "conf": round(float(_RNG.uniform(82, 98)), 1),
                 "type": p["type"],
@@ -1164,9 +1175,9 @@ class InfractionBody(BaseModel):
     longitude: float
     vehicle_type: str = "Car"
     violation_type: str = "NO PARKING"
-    location: str | None = None
-    police_station: str | None = None
-    confidence: float | None = None
+    location: Optional[str] = None
+    police_station: Optional[str] = None
+    confidence: Optional[float] = None
 
 
 def _nearest_station(lat: float, lon: float) -> str:
@@ -1182,7 +1193,7 @@ def cctv_infraction(body: InfractionBody, _: dict = Depends(require_auth)):
     active violations cache, and re-derive all analytics so telemetry / maps /
     OR-Tools routes immediately include it."""
     global DF
-    now = pd.Timestamp.now()
+    now = pd.Timestamp.now(tz="UTC")
     sev = get_max_severity(parse_violations(body.violation_type))
     size = get_vehicle_size(body.vehicle_type)
     is_weekend = 1 if now.dayofweek >= 5 else 0
@@ -1237,9 +1248,15 @@ def cctv_infraction(body: InfractionBody, _: dict = Depends(require_auth)):
             ml.train_all(DF, DATASET_VERSION)
         threading.Thread(target=_bg_retrain, daemon=True).start()
 
+    action = (
+        "Tow Truck Assigned" if cis > 60
+        else "Alert Dispatched" if cis > 30
+        else "Traffic Fine Issued"
+    )
     return {
         "appended": True,
         "cis": cis,
+        "action": action,
         "station": station,
         "totalViolations": TOTAL_VIOLATIONS,
         "avgCIS": AVG_CIS,

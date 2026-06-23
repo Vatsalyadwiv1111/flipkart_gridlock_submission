@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Activity, Database, Clock, Zap } from "lucide-react";
 import GlassCard from "../components/ui/GlassCard.jsx";
 import SectionHeader from "../components/ui/SectionHeader.jsx";
@@ -7,6 +7,12 @@ import { API_BASE } from "../lib/api.js";
 
 export default function InteractionLogs() {
   const [logs, setLogs] = useState([]);
+  const bottomRef = useRef(null);
+
+  // Auto-scroll when new logs arrive
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
 
   useEffect(() => {
     const sse = new EventSource(`${API_BASE}/logs/stream`);
@@ -15,9 +21,8 @@ export default function InteractionLogs() {
       try {
         const data = JSON.parse(e.data);
         setLogs((prev) => {
-          // Prevent duplicates by ID
           if (prev.find((l) => l.id === data.id)) return prev;
-          return [data, ...prev];
+          return [...prev, data];
         });
       } catch (err) {
         console.error("Error parsing SSE log", err);
@@ -86,6 +91,7 @@ export default function InteractionLogs() {
               )}
             </div>
           ))}
+          <div ref={bottomRef} />
         </div>
       </GlassCard>
     </div>

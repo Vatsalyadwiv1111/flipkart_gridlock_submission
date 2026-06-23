@@ -11,7 +11,9 @@ Pure-Python (pandas/numpy only) so it runs anywhere; no cloud deps.
 from __future__ import annotations
 
 import io
+import io
 from difflib import get_close_matches
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -57,7 +59,7 @@ except Exception:  # noqa: BLE001
     _HAS_RAPIDFUZZ = False
 
 
-def _fuzzy_match(col: str, choices: list[str]) -> str | None:
+def _fuzzy_match(col: str, choices: list[str]) -> Optional[str]:
     if _HAS_RAPIDFUZZ:
         m = _rf_process.extractOne(col, choices, score_cutoff=72)
         return m[0] if m else None
@@ -85,7 +87,7 @@ def map_columns(columns: list[str]) -> tuple[dict, list[str]]:
     return rename, missing
 
 
-def clean_dataframe(source, column_map: dict | None = None) -> tuple[pd.DataFrame, dict]:
+def clean_dataframe(source, column_map: Optional[dict] = None) -> tuple[pd.DataFrame, dict]:
     """Ingest a CSV (path | bytes | DataFrame) → (clean_df, stats).
 
     `column_map` (optional) is a manual override {canonical_field: source_column}

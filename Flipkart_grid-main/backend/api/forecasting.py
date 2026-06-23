@@ -84,7 +84,7 @@ def _engine() -> str:
         return "seasonal"
 
 
-def predict(df: pd.DataFrame, days: int = 7, station: str | None = None) -> dict:
+def predict(df: pd.DataFrame, days: int = 7, station: Optional[str] = None) -> dict:
     """Return {engine, station, points:[{ts, hour, day, yhat, lower, upper}]}."""
     work = df if station in (None, "", "all") else df[df["police_station"] == station]
     if work is None or work.empty:
