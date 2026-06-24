@@ -318,18 +318,7 @@ def economic_forecast(df: pd.DataFrame, days: int = 30):
     last_date = daily["date"].max()
     future_dates = [last_date + pd.Timedelta(days=i + 1) for i in range(days)]
 
-    # Prophet (optional)
-    try:
-        from prophet import Prophet
-
-        pdf = daily.rename(columns={"date": "ds", "loss": "y"})
-        m = Prophet(weekly_seasonality=True, daily_seasonality=False, yearly_seasonality=False)
-        m.fit(pdf)
-        fc = m.predict(pd.DataFrame({"ds": future_dates}))
-        pts = [{"date": ts.strftime("%Y-%m-%d"), "loss": round(float(max(0, y))), "type": "forecast"} for ts, y in zip(future_dates, fc["yhat"])]
-        return {"engine": "prophet", "history": history, "points": pts}
-    except Exception:  # noqa: BLE001
-        pass
+    # Prophet removed to save 150MB+ RAM in Docker containers.
 
     # Seasonal fallback: linear trend + weekday offset.
     y = daily["loss"].to_numpy(dtype=float)

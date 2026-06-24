@@ -36,10 +36,14 @@ import math
 import os
 import time
 import uuid
+import tempfile
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+os.makedirs("tmp", exist_ok=True)
+tempfile.tempdir = os.path.abspath("tmp")
 
 # Load backend/.env so GROQ_API_KEY / DATABASE_URL / CORS_ORIGINS are picked up
 # (must run before any os.environ reads below).
@@ -1087,6 +1091,7 @@ async def data_upload(
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
+    file.file.close()
 
     cmap = None
     if column_map:
