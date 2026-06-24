@@ -80,7 +80,7 @@ export const endpoints = {
       .post("/data/upload", fd, { headers: { "Content-Type": "multipart/form-data" }, timeout: 120000 })
       .then((r) => r.data);
   },
-  uploadStatus: (jobId) => api.get(`/data/upload/status/${jobId}`).then((r) => r.data),
+  uploadStatus: (jobId) => api.get(`/data/upload/status/${jobId}`, { timeout: 120000 }).then((r) => r.data),
   emergencyOptions: () => api.get("/emergency/options").then((r) => r.data),
   emergencyResponse: (station, hospital) =>
     api.get("/emergency/response", { params: { station, hospital } }).then((r) => r.data),
