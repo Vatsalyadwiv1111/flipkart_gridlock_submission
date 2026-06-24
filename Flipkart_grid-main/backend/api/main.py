@@ -44,6 +44,10 @@ import pandas as pd
 
 os.makedirs("tmp", exist_ok=True)
 tempfile.tempdir = os.path.abspath("tmp")
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Load backend/.env so GROQ_API_KEY / DATABASE_URL / CORS_ORIGINS are picked up
 # (must run before any os.environ reads below).
