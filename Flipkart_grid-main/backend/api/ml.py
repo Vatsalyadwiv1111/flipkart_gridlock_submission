@@ -259,25 +259,15 @@ def emerging_hotspots(df: pd.DataFrame):
             "prior": int(prior),
         }
 
+    coords = d[["latitude", "longitude"]].to_numpy()
     try:
-        from sklearn.cluster import DBSCAN
+        from sklearn.cluster import KMeans
+        k = max(3, min(8, len(d) // 200))
+        labels = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(coords)
+        d = d.assign(_cluster=labels)
+        clusters = list(range(k))
     except Exception:  # noqa: BLE001
         return []
-
-    coords = d[["latitude", "longitude"]].to_numpy()
-    labels = DBSCAN(eps=0.012, min_samples=8).fit_predict(coords)  # ~1.3km radius
-    d = d.assign(_cluster=labels)
-    clusters = [c for c in set(labels) if c != -1]
-    if not clusters:  # fall back to KMeans if DBSCAN finds no dense cores
-        try:
-            from sklearn.cluster import KMeans
-
-            k = max(3, min(8, len(d) // 200))
-            labels = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(coords)
-            d = d.assign(_cluster=labels)
-            clusters = list(range(k))
-        except Exception:  # noqa: BLE001
-            return []
 
     max_date = d["created_datetime"].max()
     last = d[d["created_datetime"] > max_date - pd.Timedelta(days=7)]
