@@ -1101,7 +1101,7 @@ async def data_upload(
 
 
 @app.get("/api/data/upload/status/{job_id}")
-def upload_status(job_id: str, _: dict = Depends(require_auth)):
+async def upload_status(job_id: str, _: dict = Depends(require_auth)):
     """Poll this until status == 'done' or 'error'."""
     job = _upload_jobs.get(job_id)
     if not job:
