@@ -463,6 +463,17 @@ def _feature_importance() -> list[dict]:
 
 app = FastAPI(title="ParkWatch AI API", version="1.0.0")
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+import traceback
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    err = traceback.format_exc()
+    print("GLOBAL EXCEPTION:", err)
+    headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Credentials": "true"}
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error", "traceback": err}, headers=headers)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
