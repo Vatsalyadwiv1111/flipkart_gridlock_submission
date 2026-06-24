@@ -115,12 +115,12 @@ def _train_eta(df: pd.DataFrame):
     try:
         from xgboost import XGBRegressor
         model = XGBRegressor(n_estimators=200, max_depth=6, learning_rate=0.1,
-                             n_jobs=-1, random_state=42, tree_method="hist")
+                             n_jobs=1, random_state=42, tree_method="hist")
         engine = "xgboost"
     except ImportError:
         from sklearn.ensemble import RandomForestRegressor
         model = RandomForestRegressor(n_estimators=120, max_depth=10,
-                                      n_jobs=-1, random_state=42)
+                                      n_jobs=1, random_state=42)
         engine = "randomforest"
     except Exception:  # noqa: BLE001
         return None
@@ -196,7 +196,7 @@ def _train_propensity(df: pd.DataFrame):
     try:
         import lightgbm as lgb
         clf = lgb.LGBMClassifier(n_estimators=200, max_depth=8,
-                                 min_child_samples=25, random_state=42, verbose=-1)
+                                 min_child_samples=25, random_state=42, verbose=-1, n_jobs=1)
         engine = "lightgbm"
     except ImportError:
         from sklearn.tree import DecisionTreeClassifier
