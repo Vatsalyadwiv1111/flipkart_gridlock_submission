@@ -96,9 +96,9 @@ def clean_dataframe(source, column_map: Optional[dict] = None) -> tuple[pd.DataF
     if isinstance(source, pd.DataFrame):
         df = source.copy()
     elif isinstance(source, (bytes, bytearray)):
-        df = pd.read_csv(io.BytesIO(source), low_memory=False)
+        df = pd.read_csv(io.BytesIO(source), low_memory=False, nrows=30000)
     else:
-        df = pd.read_csv(source, low_memory=False)
+        df = pd.read_csv(source, low_memory=False, nrows=30000)
 
     raw_rows = len(df)
     rename, missing = map_columns(list(df.columns))
