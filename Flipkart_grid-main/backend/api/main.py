@@ -1019,11 +1019,17 @@ def data_preview(_: dict = Depends(require_auth)):
 _upload_jobs: dict[str, dict] = {}  # job_id -> {"status", "result", "error"}
 
 
-def _process_upload(job_id: str, raw: bytes, filename: str, cmap: Optional[dict]):
+def _process_upload(job_id: str, raw: str, filename: str, cmap: Optional[dict]):
     """Runs in a background thread. Updates _upload_jobs[job_id] when done."""
     try:
         _upload_jobs[job_id]["status"] = "processing"
         df, stats = etl.clean_dataframe(raw, column_map=cmap)
+        # Delete the temp file now that pandas is done reading
+        try:
+            import os
+            os.remove(raw)
+        except Exception:
+            pass
         active = set_active_dataset(df, source=filename or "upload")
         
         # Save to database
@@ -1076,7 +1082,12 @@ async def data_upload(
     _: dict = Depends(require_auth),
 ):
     """Accept a CSV, kick off background processing, return a job_id immediately."""
-    raw = await file.read()
+    import tempfile
+    import shutil
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
     cmap = None
     if column_map:
         try:
@@ -1085,7 +1096,7 @@ async def data_upload(
             cmap = None
     job_id = str(uuid.uuid4())
     _upload_jobs[job_id] = {"status": "queued"}
-    background_tasks.add_task(_process_upload, job_id, raw, file.filename or "upload", cmap)
+    background_tasks.add_task(_process_upload, job_id, tmp_path, file.filename or "upload", cmap)
     return {"job_id": job_id, "status": "queued"}
 
 
