@@ -77,7 +77,7 @@ export const endpoints = {
     fd.append("file", file);
     if (columnMap) fd.append("column_map", JSON.stringify(columnMap));
     return api
-      .post("/data/upload", fd, { headers: { "Content-Type": "multipart/form-data" } })
+      .post("/data/upload", fd, { headers: { "Content-Type": "multipart/form-data" }, timeout: 120000 })
       .then((r) => r.data);
   },
   uploadStatus: (jobId) => api.get(`/data/upload/status/${jobId}`).then((r) => r.data),
