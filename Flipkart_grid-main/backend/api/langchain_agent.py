@@ -97,7 +97,7 @@ def trend_mining_tool() -> str:
 
 def get_agent_executor():
     api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
+    if not api_key or 'ChatPromptTemplate' not in globals():
         return None
         
     llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=api_key, temperature=0.1)
